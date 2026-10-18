@@ -1,0 +1,49 @@
+{
+  "model_name": "logistic_regression",
+  "best_params": {
+    "clf__C": 0.3,
+    "clf__class_weight": "balanced",
+    "clf__penalty": "l2"
+  },
+  "trained_on_rows": 303,
+  "data_md5": "e89f8473a9a1c1af7ae97038ab7cabca",
+  "selection_metric": "cv_roc_auc_mean",
+  "estimated_performance": {
+    "cv_accuracy_mean": 0.8551870748299321,
+    "cv_accuracy_std": 0.02704643119731138,
+    "cv_precision_mean": 0.8818976789800589,
+    "cv_precision_std": 0.07018786751261416,
+    "cv_recall_mean": 0.8007905138339921,
+    "cv_recall_std": 0.07503013293757824,
+    "cv_f1_mean": 0.8341810854191829,
+    "cv_f1_std": 0.032497545867502954,
+    "cv_roc_auc_mean": 0.9074935531457269,
+    "cv_roc_auc_std": 0.019275339510035346,
+    "test_accuracy": 0.8688524590163934,
+    "test_precision": 0.8125,
+    "test_recall": 0.9285714285714286,
+    "test_f1": 0.8666666666666667,
+    "test_roc_auc": 0.9610389610389611
+  },
+  "mlflow_run_id": "10045eaf3ceb4273b4ccb6e1e232484a",
+  "mlflow_model_uri": "runs:/10045eaf3ceb4273b4ccb6e1e232484a/final_model",
+  "registered_model": "heart-disease-classifier",
+  "registered_version": 1,
+  "features": [
+    "age",
+    "trestbps",
+    "chol",
+    "thalach",
+    "oldpeak",
+    "ca",
+    "sex",
+    "fbs",
+    "exang",
+    "cp",
+    "restecg",
+    "slope",
+    "thal"
+  ],
+  "sklearn_version": "1.5.2",
+  "created_at": "2026-10-18T13:42:23+00:00"
+}

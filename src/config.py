@@ -1,4 +1,5 @@
 """Central place for paths and dataset schema, shared by all modules."""
+import os
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -9,6 +10,20 @@ DATA_URL = (
 )
 RAW_DATA_PATH = PROJECT_ROOT / "data" / "raw" / "processed.cleveland.data"
 CLEAN_DATA_PATH = PROJECT_ROOT / "data" / "processed" / "heart_clean.csv"
+
+# Final packaged model (what the API serves)
+MODELS_DIR = PROJECT_ROOT / "models"
+MODEL_PATH = MODELS_DIR / "model.joblib"
+METADATA_PATH = MODELS_DIR / "model_metadata.json"
+MLFLOW_MODEL_DIR = MODELS_DIR / "mlflow_model"
+
+# Experiment tracking: local SQLite backend (enables the model registry);
+# override with MLFLOW_TRACKING_URI to point at a remote server
+MLFLOW_TRACKING_URI = os.getenv(
+    "MLFLOW_TRACKING_URI", f"sqlite:///{PROJECT_ROOT / 'mlflow.db'}")
+MLFLOW_ARTIFACT_ROOT = PROJECT_ROOT / "mlruns"
+EXPERIMENT_NAME = "heart-disease-classification"
+REGISTERED_MODEL_NAME = "heart-disease-classifier"
 
 # Column order as documented in the UCI heart-disease.names file
 COLUMNS = [
