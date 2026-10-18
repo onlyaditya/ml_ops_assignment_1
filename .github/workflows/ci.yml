@@ -1,0 +1,135 @@
+name: CI - lint, test, train
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same branch cancels the run still in progress
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  MIN_CV_ROC_AUC: "0.85"
+
+defaults:
+  run:
+    # explicit bash => `-eo pipefail`, so a failure inside `cmd | tee` fails the step
+    shell: bash
+
+jobs:
+  lint:
+    name: Lint (flake8)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install flake8
+        run: pip install flake8==7.1.1
+
+      - name: Run flake8
+        run: flake8 . --count --statistics --show-source --tee --output-file=flake8-report.txt
+
+      - name: Upload lint report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: lint-report
+          path: flake8-report.txt
+
+  test:
+    name: Unit tests (pytest)
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests with coverage
+        run: |
+          mkdir -p test-results
+          pytest --junitxml=test-results/junit.xml \
+                 --cov=src --cov-report=term-missing \
+                 --cov-report=xml:test-results/coverage.xml
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results
+          path: test-results/
+
+  train:
+    name: Train & package model
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download and clean data
+        run: python -m src.data --force
+
+      - name: Verify cleaned data matches committed dataset
+        run: git diff --exit-code --stat -- data/processed/heart_clean.csv
+
+      - name: Train, tune and track models (MLflow)
+        run: python -m src.train 2>&1 | tee training.log
+
+      - name: Quality gate and job summary
+        run: python -m src.ci_report --min-roc-auc "$MIN_CV_ROC_AUC" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload trained model
+        uses: actions/upload-artifact@v7
+        with:
+          name: model
+          path: |
+            models/model.joblib
+            models/model_metadata.json
+            models/mlflow_model/
+
+      - name: Upload reports, plots and training log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: training-reports
+          path: |
+            training.log
+            reports/
+            screenshots/models/
+
+      - name: Upload MLflow tracking store
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mlflow-tracking
+          path: |
+            mlflow.db
+            mlruns/
+          retention-days: 14

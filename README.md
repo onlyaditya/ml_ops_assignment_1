@@ -109,4 +109,37 @@ The selected configuration is **refit on all 303 rows** and saved to `models/`:
 Because imputation, scaling and one-hot encoding live inside the saved pipeline, raw patient
 records (including missing values or unseen category codes) can be passed directly to `predict_proba`.
 
+## Testing
+
+```bash
+pytest                                   # 29 tests
+pytest --cov=src --cov-report=term-missing
+```
+
+| File | Covers |
+|---|---|
+| `tests/test_data.py` | `?` parsing, target binarisation, duplicates, out-of-range values, download skip/force (network mocked) |
+| `tests/test_features.py` | column order/dtypes, imputation leaves no NaNs, scaling, one-hot width, unseen categories, missing columns |
+| `tests/test_train.py` | model grids, CV summary, metrics range, learns better than chance, **end-to-end training run** in a temp dir (train → select → refit → save → reload → predict → report), quality gate |
+| `tests/test_model_artifact.py` | packaged `models/` model: schema, probabilities, missing/unseen inputs, high-risk > low-risk patient |
+
+Tests use small synthetic datasets (`tests/conftest.py`), so they need no network and never touch `models/` or the MLflow store.
+
+## CI/CD (GitHub Actions)
+
+`.github/workflows/ci.yml` runs on every push to `main`, every pull request, and manually:
+
+```
+lint (flake8) ──► test (pytest + coverage) ──► train (data → train → quality gate)
+```
+
+| Job | Steps | Artifacts |
+|---|---|---|
+| **lint** | `flake8` (config in `.flake8`) | `lint-report` |
+| **test** | install `requirements.txt` → `pytest` with JUnit XML + coverage | `test-results` (junit.xml, coverage.xml) |
+| **train** | `python -m src.data --force` → verify cleaned CSV is identical to the committed one → `python -m src.train` → `python -m src.ci_report` (fails if CV ROC-AUC < 0.85; model table written to the job summary) | `model`, `training-reports` (log, CSVs, plots), `mlflow-tracking` (mlflow.db + mlruns) |
+
+Each job depends on the previous one, so any lint error, failing test, data drift or below-threshold
+model stops the pipeline with a red build and the failing step's log.
+
 _More sections (data, training, API, deployment, monitoring) will be added as the project progresses._
