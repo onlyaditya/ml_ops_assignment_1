@@ -112,7 +112,7 @@ records (including missing values or unseen category codes) can be passed direct
 ## Testing
 
 ```bash
-pytest                                   # 29 tests
+pytest                                   # 44 tests
 pytest --cov=src --cov-report=term-missing
 ```
 
@@ -122,6 +122,7 @@ pytest --cov=src --cov-report=term-missing
 | `tests/test_features.py` | column order/dtypes, imputation leaves no NaNs, scaling, one-hot width, unseen categories, missing columns |
 | `tests/test_train.py` | model grids, CV summary, metrics range, learns better than chance, **end-to-end training run** in a temp dir (train → select → refit → save → reload → predict → report), quality gate |
 | `tests/test_model_artifact.py` | packaged `models/` model: schema, probabilities, missing/unseen inputs, high-risk > low-risk patient |
+| `tests/test_api.py` | API contract: `/health`, `/model-info`, `/predict` output fields, null `ca`/`thal` accepted, invalid/unknown/missing fields → 422, risk bands, inference CLI = API |
 
 Tests use small synthetic datasets (`tests/conftest.py`), so they need no network and never touch `models/` or the MLflow store.
 
@@ -130,16 +131,71 @@ Tests use small synthetic datasets (`tests/conftest.py`), so they need no networ
 `.github/workflows/ci.yml` runs on every push to `main`, every pull request, and manually:
 
 ```
-lint (flake8) ──► test (pytest + coverage) ──► train (data → train → quality gate)
+lint (flake8) ──► test (pytest + coverage) ──┬─► train  (data → train → quality gate)
+                                             └─► docker (build image → run → smoke-test /predict)
 ```
 
 | Job | Steps | Artifacts |
 |---|---|---|
 | **lint** | `flake8` (config in `.flake8`) | `lint-report` |
 | **test** | install `requirements.txt` → `pytest` with JUnit XML + coverage | `test-results` (junit.xml, coverage.xml) |
+| **docker** | `docker build` → run container → wait for `/health` → POST `samples/patient_high_risk.json` (expects class 1) → invalid input must return 422 | container logs in the job output |
 | **train** | `python -m src.data --force` → verify cleaned CSV is identical to the committed one → `python -m src.train` → `python -m src.ci_report` (fails if CV ROC-AUC < 0.85; model table written to the job summary) | `model`, `training-reports` (log, CSVs, plots), `mlflow-tracking` (mlflow.db + mlruns) |
 
 Each job depends on the previous one, so any lint error, failing test, data drift or below-threshold
 model stops the pipeline with a red build and the failing step's log.
 
-_More sections (data, training, API, deployment, monitoring) will be added as the project progresses._
+## Inference & serving API
+
+### Inference script
+
+```bash
+python -m src.predict samples/patient_high_risk.json                        # local model
+python -m src.predict samples/patients.json                                 # a list of patients
+python -m src.predict samples/patients.json --url http://localhost:8000     # same, via the API
+```
+
+`src/predict.py::score_records` is the only place that turns raw records into predictions;
+both the CLI and the API call it, so they always agree.
+
+### FastAPI service (`src/api.py`)
+
+```bash
+uvicorn src.api:app --reload        # interactive docs at http://127.0.0.1:8000/docs
+```
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /health` | liveness/readiness check (Docker `HEALTHCHECK`, Kubernetes probes) |
+| `GET /model-info` | served model version, hyperparameters, features, CV/test performance estimate |
+| `POST /predict` | one patient (JSON) → prediction, confidence, risk level |
+
+```bash
+curl -X POST http://localhost:8000/predict \
+     -H "Content-Type: application/json" -d @samples/patient_high_risk.json
+```
+```json
+{"prediction": 1, "label": "heart disease", "confidence": 0.9961,
+ "probability_disease": 0.9961, "risk_level": "high", "model_version": "logistic_regression-v1"}
+```
+
+- `confidence` = probability of the predicted class; `risk_level` bands P(disease): < 0.3 low, < 0.7 moderate, otherwise high.
+- **Input validation** (pydantic): categorical codes must be valid UCI codes (e.g. `cp` ∈ 1–4, `thal` ∈ {3, 6, 7}),
+  numeric values must lie in the same plausible clinical ranges used during data cleaning, and unknown fields
+  are rejected → HTTP 422 with a field-level message. Only `ca` and `thal` (missing in the real data) may be `null`;
+  the model pipeline imputes them.
+- Settings via environment variables: `MODEL_PATH`, `PREDICTION_THRESHOLD` (default 0.5).
+
+### Docker
+
+The image contains only the serving code and the model (`requirements-serve.txt` — no MLflow, Jupyter or plotting
+libraries), runs as a non-root user and has a built-in health check.
+
+```bash
+docker build -t heart-disease-api:1.0 .
+docker run -d --name heart-api -p 8000:8000 heart-disease-api:1.0
+curl http://localhost:8000/health
+python -m src.predict samples/patients.json --url http://localhost:8000
+docker logs heart-api
+```
+

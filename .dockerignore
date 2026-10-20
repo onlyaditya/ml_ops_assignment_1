@@ -1,0 +1,7 @@
+# Only src/, models/ and requirements-serve.txt are needed in the image
+*
+!src/
+!models/model.joblib
+!models/model_metadata.json
+!requirements-serve.txt
+**/__pycache__

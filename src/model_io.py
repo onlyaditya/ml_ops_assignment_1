@@ -11,9 +11,7 @@ import shutil
 from datetime import datetime, timezone
 
 import joblib
-import mlflow
 import sklearn
-from mlflow.models import infer_signature
 
 from src.config import (
     FEATURES,
@@ -26,6 +24,10 @@ from src.config import (
 
 def save_final_model(model, X_sample, metadata: dict) -> dict:
     """Persist the fitted pipeline in joblib + MLflow formats with metadata."""
+    # imported here so serving (load_model) works without MLflow installed
+    import mlflow
+    from mlflow.models import infer_signature
+
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     joblib.dump(model, MODEL_PATH)
 
