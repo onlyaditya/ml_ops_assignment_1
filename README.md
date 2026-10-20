@@ -1,5 +1,23 @@
 # Heart Disease Risk Prediction — End-to-End MLOps
 
+**MLOps (AIMLCZG523) — Assignment 1** · Aditya Kumar · BITS ID 2025ae05701
+
+## Deliverables
+
+| Deliverable | Link |
+|---|---|
+| Code repository | https://github.com/onlyaditya/ml_ops_assignment_1 |
+| Final report (10 pages) | [`reports/MLOps_Assignment1_Report.docx`](reports/MLOps_Assignment1_Report.docx) |
+| Demo video of the pipeline | [video link] |
+| API access (local, no public URL) | [Access instructions (local testing)](#access-instructions-local-testing) |
+| Code, Dockerfile, requirements | [`src/`](src/) · [`Dockerfile`](Dockerfile) · [`requirements.txt`](requirements.txt) · [`requirements-serve.txt`](requirements-serve.txt) |
+| Cleaned dataset + download script | [`data/processed/heart_clean.csv`](data/processed/heart_clean.csv) · [`src/data.py`](src/data.py) |
+| Notebooks / scripts (EDA, training, inference) | [`notebooks/01_eda.ipynb`](notebooks/01_eda.ipynb) · [`src/train.py`](src/train.py) · [`src/predict.py`](src/predict.py) |
+| Unit tests | [`tests/`](tests/) |
+| GitHub Actions workflow | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) · [CI runs](https://github.com/onlyaditya/ml_ops_assignment_1/actions) |
+| Deployment manifests | [`k8s/`](k8s/) · [`monitoring/`](monitoring/) |
+| Screenshots | [`screenshots/`](screenshots/) |
+
 Predicts the presence of heart disease from patient health data (UCI Heart Disease dataset)
 and serves the model as a containerised, monitored API.
 
@@ -9,6 +27,65 @@ and serves the model as a containerised, monitored API.
 
 Generated with `python reports/architecture_diagram.py`. The full write-up is in
 [`reports/MLOps_Assignment1_Report.docx`](reports/MLOps_Assignment1_Report.docx).
+
+## Access instructions (local testing)
+
+There is no public URL — the API runs on the local Kubernetes cluster built into Docker Desktop.
+To run the whole stack on your own machine:
+
+**Prerequisites:** Python 3.12, Docker Desktop with *Settings → Kubernetes → Enable Kubernetes* switched on,
+`kubectl` pointing at the `docker-desktop` context, and ports 80, 9090 and 3030 free.
+
+```bash
+# 1. get the code and the Python environment
+git clone https://github.com/onlyaditya/ml_ops_assignment_1.git
+cd ml_ops_assignment_1
+python3.12 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+
+# 2. build the API image (the trained model in models/ is copied into it)
+docker build -t heart-disease-api:1.1 .
+
+# 3. deploy the API and the monitoring stack
+kubectl config use-context docker-desktop
+kubectl apply -k k8s/
+kubectl apply -k monitoring/
+kubectl -n heart-disease rollout status deploy/heart-api
+kubectl -n monitoring rollout status deploy/grafana
+
+# 4. check that it answers
+curl http://localhost/health
+curl -X POST http://localhost/predict \
+     -H "Content-Type: application/json" -d @samples/patient_high_risk.json
+python -m src.predict samples/patients.json --url http://localhost
+
+# 5. (optional) send traffic so the dashboard has data
+python -m src.traffic --url http://localhost --rate 8 --duration 300
+```
+
+| What | URL |
+|---|---|
+| Prediction API (LoadBalancer) | http://localhost/predict (POST JSON) |
+| Interactive API docs (Swagger UI) | http://localhost/docs |
+| Health / model info / metrics | http://localhost/health · http://localhost/model-info · http://localhost/metrics |
+| Prometheus | http://localhost:9090 |
+| Grafana dashboard | http://localhost:3030 (opens without login; admin login `admin` / `heart-mlops`) |
+
+Example request body (`samples/patient_high_risk.json`), all 13 UCI features:
+
+```json
+{"age": 58, "sex": 1, "cp": 4, "trestbps": 150, "chol": 270, "fbs": 0, "restecg": 2,
+ "thalach": 111, "exang": 1, "oldpeak": 2.8, "slope": 2, "ca": 2, "thal": 7}
+```
+
+**Without Kubernetes**, the same image runs with plain Docker on port 8000:
+
+```bash
+docker run -d --name heart-api -p 8000:8000 heart-disease-api:1.1
+curl http://localhost:8000/health      # Swagger UI: http://localhost:8000/docs
+```
+
+**Clean up:** `kubectl delete -k monitoring/ && kubectl delete -k k8s/` (and `docker rm -f heart-api`).
 
 ## Project structure
 
