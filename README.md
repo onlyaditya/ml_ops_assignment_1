@@ -8,7 +8,7 @@
 |---|---|
 | Code repository | https://github.com/onlyaditya/ml_ops_assignment_1 |
 | Final report (10 pages) | [`reports/MLOps_Assignment1_Report.docx`](reports/MLOps_Assignment1_Report.docx) |
-| Demo video of the pipeline | [video link] |
+| Demo video of the pipeline | https://drive.google.com/file/d/1yF8we33BeOROtuLbNoJp71mo1tWGZkCV/view?pli=1 |
 | API access (local, no public URL) | [Access instructions (local testing)](#access-instructions-local-testing) |
 | Code, Dockerfile, requirements | [`src/`](src/) · [`Dockerfile`](Dockerfile) · [`requirements.txt`](requirements.txt) · [`requirements-serve.txt`](requirements-serve.txt) |
 | Cleaned dataset + download script | [`data/processed/heart_clean.csv`](data/processed/heart_clean.csv) · [`src/data.py`](src/data.py) |
