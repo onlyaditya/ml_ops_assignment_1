@@ -3,6 +3,13 @@
 Predicts the presence of heart disease from patient health data (UCI Heart Disease dataset)
 and serves the model as a containerised, monitored API.
 
+## Architecture
+
+![Architecture](screenshots/architecture/architecture.png)
+
+Generated with `python reports/architecture_diagram.py`. The full write-up is in
+[`reports/MLOps_Assignment1_Report.docx`](reports/MLOps_Assignment1_Report.docx).
+
 ## Project structure
 
 ```
