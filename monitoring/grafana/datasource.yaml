@@ -1,0 +1,11 @@
+# Provisioned at start-up, so Grafana is usable without any clicking
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    uid: prometheus           # referenced by the dashboard JSON
+    type: prometheus
+    access: proxy
+    url: http://prometheus.monitoring.svc:9090
+    isDefault: true
+    jsonData:
+      timeInterval: 10s       # = scrape interval

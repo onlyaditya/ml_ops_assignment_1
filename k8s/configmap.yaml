@@ -9,3 +9,4 @@ metadata:
     app.kubernetes.io/name: heart-api
 data:
   PREDICTION_THRESHOLD: "0.5"
+  LOG_LEVEL: "INFO"          # DEBUG also logs every /health and /metrics call

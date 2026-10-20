@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.config import MODEL_PATH, PROJECT_ROOT
+from src.monitoring import JsonFormatter
 from src.predict import main as predict_cli
 from src.predict import risk_level
 
@@ -87,3 +88,57 @@ def test_inference_cli_matches_api(client, high_risk, capsys):
     cli = json.loads(capsys.readouterr().out)
     api = client.post("/predict", json=high_risk).json()
     assert cli["probability_disease"] == api["probability_disease"]
+
+
+# --- monitoring: /metrics and structured request logs -------------------------
+
+def _metric(client, line_start: str) -> float:
+    """Value of the first exposition line starting with `line_start` (0 if absent)."""
+    for line in client.get("/metrics").text.splitlines():
+        if line.startswith(line_start):
+            return float(line.rsplit(" ", 1)[1])
+    return 0.0
+
+
+def test_metrics_count_predictions(client, high_risk):
+    key = 'heart_api_predictions_total{prediction="1",risk_level="high"}'
+    before = _metric(client, key)
+    client.post("/predict", json=high_risk)
+    assert _metric(client, key) == before + 1
+    assert _metric(client, "heart_api_prediction_probability_count") >= 1
+
+
+def test_metrics_count_validation_errors_by_field(client, patient):
+    key = 'heart_api_validation_errors_total{field="cp"}'
+    before = _metric(client, key)
+    patient["cp"] = 9
+    client.post("/predict", json=patient)
+    assert _metric(client, key) == before + 1
+
+
+def test_unknown_paths_share_one_metric_label(client):
+    client.get("/no-such-page")
+    client.get("/another-typo")
+    text = client.get("/metrics").text
+    assert 'endpoint="other"' in text
+    assert "no-such-page" not in text
+
+
+def test_request_id_is_returned_and_propagated(client):
+    assert len(client.get("/health").headers["X-Request-ID"]) == 12
+    resp = client.get("/health", headers={"X-Request-ID": "trace-abc"})
+    assert resp.headers["X-Request-ID"] == "trace-abc"
+
+
+def test_prediction_log_is_json_without_patient_data(client, high_risk, caplog):
+    caplog.set_level("INFO", logger="heart_api")
+    client.post("/predict", json=high_risk, headers={"X-Request-ID": "log-test"})
+    # render the captured records exactly as the stdout handler would
+    records = [json.loads(JsonFormatter().format(r)) for r in caplog.records
+               if r.name == "heart_api"]
+    mine = [r for r in records if r.get("request_id") == "log-test"]
+    assert {r["msg"] for r in mine} == {"prediction", "request"}
+    request_log = next(r for r in mine if r["msg"] == "request")
+    assert request_log["status"] == 200 and request_log["latency_ms"] > 0
+    # no feature values (e.g. cholesterol) may leak into the logs
+    assert all("chol" not in r for r in mine)

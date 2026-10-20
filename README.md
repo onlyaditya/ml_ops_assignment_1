@@ -15,7 +15,7 @@ heart-disease-mlops/
 ├── tests/              # pytest unit tests
 ├── models/             # final serialised model
 ├── k8s/                # Kubernetes manifests
-├── monitoring/         # Prometheus / Grafana config
+├── monitoring/         # Prometheus / Grafana config, alert rules, dashboard
 ├── screenshots/        # images used in the report
 ├── reports/            # final report
 └── .github/workflows/  # CI/CD pipeline
@@ -112,7 +112,7 @@ records (including missing values or unseen category codes) can be passed direct
 ## Testing
 
 ```bash
-pytest                                   # 44 tests
+pytest                                   # 51 tests
 pytest --cov=src --cov-report=term-missing
 ```
 
@@ -122,7 +122,8 @@ pytest --cov=src --cov-report=term-missing
 | `tests/test_features.py` | column order/dtypes, imputation leaves no NaNs, scaling, one-hot width, unseen categories, missing columns |
 | `tests/test_train.py` | model grids, CV summary, metrics range, learns better than chance, **end-to-end training run** in a temp dir (train → select → refit → save → reload → predict → report), quality gate |
 | `tests/test_model_artifact.py` | packaged `models/` model: schema, probabilities, missing/unseen inputs, high-risk > low-risk patient |
-| `tests/test_api.py` | API contract: `/health`, `/model-info`, `/predict` output fields, null `ca`/`thal` accepted, invalid/unknown/missing fields → 422, risk bands, inference CLI = API |
+| `tests/test_traffic.py` | traffic generator: payloads are valid JSON (ints for codes, null for missing), invalid share respected (network mocked) |
+| `tests/test_api.py` | API contract: `/health`, `/model-info`, `/predict` output fields, null `ca`/`thal` accepted, invalid/unknown/missing fields → 422, risk bands, inference CLI = API; **monitoring**: prediction/validation-error counters, unknown URLs share one metric label, `X-Request-ID` propagation, JSON request log without patient data |
 
 Tests use small synthetic datasets (`tests/conftest.py`), so they need no network and never touch `models/` or the MLflow store.
 
@@ -168,6 +169,7 @@ uvicorn src.api:app --reload        # interactive docs at http://127.0.0.1:8000/
 |---|---|
 | `GET /health` | liveness/readiness check (Docker `HEALTHCHECK`, Kubernetes probes) |
 | `GET /model-info` | served model version, hyperparameters, features, CV/test performance estimate |
+| `GET /metrics` | Prometheus metrics (see [Monitoring & logging](#monitoring--logging)) |
 | `POST /predict` | one patient (JSON) → prediction, confidence, risk level |
 
 ```bash
@@ -184,7 +186,7 @@ curl -X POST http://localhost:8000/predict \
   numeric values must lie in the same plausible clinical ranges used during data cleaning, and unknown fields
   are rejected → HTTP 422 with a field-level message. Only `ca` and `thal` (missing in the real data) may be `null`;
   the model pipeline imputes them.
-- Settings via environment variables: `MODEL_PATH`, `PREDICTION_THRESHOLD` (default 0.5).
+- Settings via environment variables: `MODEL_PATH`, `PREDICTION_THRESHOLD` (default 0.5), `LOG_LEVEL` (default INFO).
 
 ### Docker
 
@@ -192,8 +194,8 @@ The image contains only the serving code and the model (`requirements-serve.txt`
 libraries), runs as a non-root user and has a built-in health check.
 
 ```bash
-docker build -t heart-disease-api:1.0 .
-docker run -d --name heart-api -p 8000:8000 heart-disease-api:1.0
+docker build -t heart-disease-api:1.1 .
+docker run -d --name heart-api -p 8000:8000 heart-disease-api:1.1
 curl http://localhost:8000/health
 python -m src.predict samples/patients.json --url http://localhost:8000
 docker logs heart-api
@@ -209,12 +211,12 @@ Manifests live in `k8s/` and are applied together with Kustomize.
 |---|---|
 | `k8s/namespace.yaml` | namespace `heart-disease` (whole app can be inspected or deleted at once) |
 | `k8s/configmap.yaml` | runtime settings (`PREDICTION_THRESHOLD`) injected as environment variables |
-| `k8s/deployment.yaml` | 2 replicas of `heart-disease-api:1.0`, rolling updates with `maxUnavailable: 0`, readiness + liveness probes on `/health`, CPU/memory requests and limits, non-root read-only container, `preStop` delay for graceful shutdown |
+| `k8s/deployment.yaml` | 2 replicas of `heart-disease-api:1.1`, rolling updates with `maxUnavailable: 0`, readiness + liveness probes on `/health`, CPU/memory requests and limits, non-root read-only container, `preStop` delay for graceful shutdown |
 | `k8s/service.yaml` | `LoadBalancer` service, port 80 → container port 8000 |
 | `k8s/kustomization.yaml` | lists the above so one command deploys everything |
 
 ```bash
-docker build -t heart-disease-api:1.0 .        # the cluster uses the local image (no registry)
+docker build -t heart-disease-api:1.1 .        # the cluster uses the local image (no registry)
 kubectl apply -k k8s/
 kubectl -n heart-disease rollout status deploy/heart-api
 kubectl -n heart-disease get pods,svc
@@ -237,3 +239,69 @@ Verified behaviour: requests are spread across both pods; a deleted pod is repla
 within seconds; a rolling restart under continuous traffic (≈ 7 requests/s) completed with
 **0 failed requests out of 868**. Without the `preStop` delay the same test lost ~2% of requests,
 because a terminating pod stopped accepting connections before the load balancer had removed it.
+
+## Monitoring & logging
+
+### Request logging (`src/monitoring.py`)
+
+Every request is logged as one JSON line on stdout with a request id (taken from an incoming
+`X-Request-ID` header or generated, and returned in the response header):
+
+```json
+{"ts": "2026-10-20T07:28:49.975+00:00", "level": "INFO", "logger": "heart_api", "msg": "prediction",
+ "request_id": "5c8cd3b2ff51", "prediction": 1, "probability_disease": 0.667, "risk_level": "moderate",
+ "model_version": "logistic_regression-v1"}
+{"ts": "2026-10-20T07:28:49.976+00:00", "level": "INFO", "logger": "heart_api", "msg": "request",
+ "request_id": "5c8cd3b2ff51", "method": "POST", "path": "/predict", "status": 200, "latency_ms": 7.88,
+ "client": "10.244.0.1"}
+```
+
+- Rejected inputs log a `validation error` warning listing the offending fields.
+- **Patient feature values are never logged** — only request metadata and the model's output.
+- `/health` and `/metrics` calls are logged only at `LOG_LEVEL=DEBUG` (probes and scrapes would drown everything else).
+- uvicorn's plain-text access log is replaced by these JSON lines.
+
+```bash
+kubectl -n heart-disease logs -l app.kubernetes.io/name=heart-api --prefix -f
+```
+
+### Metrics (`GET /metrics`)
+
+| Metric | Type | Labels | Answers |
+|---|---|---|---|
+| `heart_api_requests_total` | counter | method, endpoint, status | traffic and error rate |
+| `heart_api_request_duration_seconds` | histogram | endpoint | latency percentiles |
+| `heart_api_predictions_total` | counter | prediction, risk_level | what the model is answering |
+| `heart_api_prediction_probability` | histogram | – | distribution / mean of P(disease) → drift |
+| `heart_api_validation_errors_total` | counter | field | which inputs clients get wrong |
+| `heart_api_model_info` | gauge | model_version, threshold | which model is live |
+
+Unknown URLs are counted under `endpoint="other"`, so scanners or typos cannot create unlimited label values.
+
+### Prometheus + Grafana on Kubernetes (`monitoring/`)
+
+```bash
+kubectl apply -k k8s/              # API (pods carry prometheus.io/* scrape annotations)
+kubectl apply -k monitoring/       # Prometheus + Grafana in namespace "monitoring"
+python -m src.traffic --url http://localhost --rate 8 --duration 300   # generate traffic
+```
+
+| URL | What |
+|---|---|
+| http://localhost:9090 | Prometheus — *Status → Targets* shows both API pods, *Alerts* shows the rules |
+| http://localhost:3030 | Grafana — opens on the **Heart Disease API** dashboard (anonymous read-only; admin login `admin` / `heart-mlops`) |
+
+- **Discovery:** Prometheus finds API pods through the Kubernetes API (`kubernetes_sd_configs`, role `pod`) and scrapes
+  each pod separately, so a failing pod shows up as `up == 0` instead of being hidden behind the Service.
+  It only has a namespaced `Role` to list pods in `heart-disease` (least privilege).
+- **Provisioning as code:** the Grafana data source and the dashboard JSON (`monitoring/grafana/`) are loaded at
+  start-up; Kustomize turns the plain config files into ConfigMaps with a content hash, so editing a file and
+  re-applying restarts the affected pod automatically.
+- **Dashboard panels:** pods up, request rate, rejected-request %, p95 latency, model version; request rate by
+  endpoint/status; p50/p95/p99 latency; predictions per minute by risk level; risk-level share; mean predicted
+  probability vs the 45.9% training base rate (drift indicator); probability distribution; rejected inputs by field;
+  requests per pod (load balancing); memory per pod.
+- **Alert rules** (`monitoring/alerts.yml`, shown in the Prometheus UI): pod down, > 1% server errors,
+  p95 latency > 250 ms, > 20% rejected inputs, mean predicted probability far from the training base rate for 30 min.
+- `src/traffic.py` replays real patients from the cleaned dataset (5% deliberately invalid) to populate the dashboard.
+

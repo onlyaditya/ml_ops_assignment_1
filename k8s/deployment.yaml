@@ -25,13 +25,18 @@ spec:
         app.kubernetes.io/name: heart-api
         app.kubernetes.io/component: model-serving
         model: logistic-regression-v1
+      annotations:
+        # picked up by the Prometheus pod discovery in monitoring/prometheus.yml
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: /metrics
     spec:
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001        # appuser created in the Dockerfile
       containers:
         - name: api
-          image: heart-disease-api:1.0
+          image: heart-disease-api:1.1
           # locally built image, not in a registry: use the node's copy
           imagePullPolicy: IfNotPresent
           ports:

@@ -1,0 +1,34 @@
+# Deploy Prometheus + Grafana with:  kubectl apply -k monitoring/
+# (deploy the API first: kubectl apply -k k8s/)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - prometheus-rbac.yaml
+  - prometheus.yaml
+  - grafana.yaml
+
+# Config files stay readable as plain files in git; Kustomize wraps them in
+# ConfigMaps and adds a content hash to the name, so editing a file and
+# re-applying automatically rolls the pod that uses it.
+configMapGenerator:
+  - name: prometheus-config
+    namespace: monitoring
+    files: [prometheus.yml, alerts.yml]
+  - name: grafana-datasources
+    namespace: monitoring
+    files: [grafana/datasource.yaml]
+  - name: grafana-dashboard-provider
+    namespace: monitoring
+    files: [grafana/dashboard-provider.yaml]
+  - name: grafana-dashboards
+    namespace: monitoring
+    files: [grafana/dashboards/heart-api.json]
+
+secretGenerator:
+  # local demo credentials (admin / heart-mlops); change before any real use
+  - name: grafana-admin
+    namespace: monitoring
+    literals:
+      - user=admin
+      - password=heart-mlops
