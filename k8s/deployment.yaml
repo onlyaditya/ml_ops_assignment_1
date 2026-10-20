@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: heart-api
+  namespace: heart-disease
+  labels:
+    app.kubernetes.io/name: heart-api
+    app.kubernetes.io/component: model-serving
+    app.kubernetes.io/part-of: heart-disease-mlops
+spec:
+  # 2 replicas: one pod can restart or roll out while the other keeps serving
+  replicas: 2
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0   # never drop below 2 ready pods during an update
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: heart-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: heart-api
+        app.kubernetes.io/component: model-serving
+        model: logistic-regression-v1
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001        # appuser created in the Dockerfile
+      containers:
+        - name: api
+          image: heart-disease-api:1.0
+          # locally built image, not in a registry: use the node's copy
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: heart-api-config
+          resources:
+            # measured idle usage is ~115 MiB (docker stats); limit leaves room for request bursts
+            requests:
+              cpu: 100m
+              memory: 192Mi
+            limits:
+              cpu: 500m
+              memory: 384Mi
+          # traffic only reaches a pod once the model is loaded
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            failureThreshold: 3
+          # restart the container if it stops answering
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            failureThreshold: 3
+          # On shutdown, keep serving for 10 s while the pod is removed from the
+          # Service endpoints; without this a rolling update dropped ~2% of requests.
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "10"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

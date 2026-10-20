@@ -1,0 +1,11 @@
+# Runtime settings read by src/api.py; change here + `kubectl rollout restart`
+# instead of rebuilding the image.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: heart-api-config
+  namespace: heart-disease
+  labels:
+    app.kubernetes.io/name: heart-api
+data:
+  PREDICTION_THRESHOLD: "0.5"

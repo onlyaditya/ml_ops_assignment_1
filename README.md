@@ -199,3 +199,41 @@ python -m src.predict samples/patients.json --url http://localhost:8000
 docker logs heart-api
 ```
 
+
+## Kubernetes deployment
+
+Target: the local Kubernetes cluster built into Docker Desktop (context `docker-desktop`).
+Manifests live in `k8s/` and are applied together with Kustomize.
+
+| File | What it defines |
+|---|---|
+| `k8s/namespace.yaml` | namespace `heart-disease` (whole app can be inspected or deleted at once) |
+| `k8s/configmap.yaml` | runtime settings (`PREDICTION_THRESHOLD`) injected as environment variables |
+| `k8s/deployment.yaml` | 2 replicas of `heart-disease-api:1.0`, rolling updates with `maxUnavailable: 0`, readiness + liveness probes on `/health`, CPU/memory requests and limits, non-root read-only container, `preStop` delay for graceful shutdown |
+| `k8s/service.yaml` | `LoadBalancer` service, port 80 → container port 8000 |
+| `k8s/kustomization.yaml` | lists the above so one command deploys everything |
+
+```bash
+docker build -t heart-disease-api:1.0 .        # the cluster uses the local image (no registry)
+kubectl apply -k k8s/
+kubectl -n heart-disease rollout status deploy/heart-api
+kubectl -n heart-disease get pods,svc
+
+curl http://localhost/health
+python -m src.predict samples/patients.json --url http://localhost
+```
+
+On Docker Desktop the LoadBalancer is published on `localhost`, so the API is at **http://localhost/**
+(Swagger UI: http://localhost/docs). Useful operations:
+
+```bash
+kubectl -n heart-disease logs -l app.kubernetes.io/name=heart-api --prefix   # logs from both pods
+kubectl -n heart-disease rollout restart deploy/heart-api                    # zero-downtime restart
+kubectl -n heart-disease scale deploy/heart-api --replicas=3
+kubectl delete -k k8s/                                                       # remove everything
+```
+
+Verified behaviour: requests are spread across both pods; a deleted pod is replaced automatically
+within seconds; a rolling restart under continuous traffic (≈ 7 requests/s) completed with
+**0 failed requests out of 868**. Without the `preStop` delay the same test lost ~2% of requests,
+because a terminating pod stopped accepting connections before the load balancer had removed it.

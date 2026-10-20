@@ -1,0 +1,17 @@
+# LoadBalancer: on Docker Desktop the external IP is localhost, so the API is
+# reachable at http://localhost/ (port 80) and requests are spread over both pods.
+apiVersion: v1
+kind: Service
+metadata:
+  name: heart-api
+  namespace: heart-disease
+  labels:
+    app.kubernetes.io/name: heart-api
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: heart-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

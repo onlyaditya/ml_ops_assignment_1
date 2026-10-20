@@ -1,0 +1,7 @@
+# Separate namespace so the whole app can be inspected or removed in one go
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: heart-disease
+  labels:
+    app.kubernetes.io/part-of: heart-disease-mlops
